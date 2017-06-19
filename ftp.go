@@ -35,7 +35,8 @@ type ServerConn struct {
 
 	conn          *textproto.Conn
 	host          string
-	timeout       time.Duration
+	dialTimeout   time.Duration
+	ioTimeout     time.Duration
 	features      map[string]string
 	mlstSupported bool
 }
@@ -60,17 +61,27 @@ func Connect(addr string) (*ServerConn, error) {
 	return Dial(addr)
 }
 
-// Dial is like DialTimeout with no timeout
+// Dial is like DialTimeout with no dial timeout
 func Dial(addr string) (*ServerConn, error) {
 	return DialTimeout(addr, 0)
 }
 
-// DialTimeout initializes the connection to the specified ftp server address.
+// DialTimeout is like DialTimeouts with no I/O timeout
+func DialTimeout(addr string, timeout time.Duration) (*ServerConn, error) {
+	return DialTimeouts(addr, timeout, 0)
+}
+
+// DialTimeouts initializes the connection to the specified ftp server address.
+// Argument dialTimeout specifies maximum amount of time to try establishing a
+// new connection before error is returned. Argument ioTimeout controls maximum
+// amount of time a single data connection can be alive. Because file listing
+// and downloading opens a new connection, this timeout becomes more like
+// per-transfler or per command timeout.
 //
 // It is generally followed by a call to Login() as most FTP commands require
 // an authenticated user.
-func DialTimeout(addr string, timeout time.Duration) (*ServerConn, error) {
-	tconn, err := net.DialTimeout("tcp", addr, timeout)
+func DialTimeouts(addr string, dialTimeout, ioTimeout time.Duration) (*ServerConn, error) {
+	tconn, err := net.DialTimeout("tcp", addr, dialTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -82,11 +93,12 @@ func DialTimeout(addr string, timeout time.Duration) (*ServerConn, error) {
 	conn := textproto.NewConn(tconn)
 
 	c := &ServerConn{
-		conn:     conn,
-		host:     remoteAddr.IP.String(),
-		timeout:  timeout,
-		features: make(map[string]string),
-		Location: time.UTC,
+		conn:        conn,
+		host:        remoteAddr.IP.String(),
+		dialTimeout: dialTimeout,
+		ioTimeout:   ioTimeout,
+		features:    make(map[string]string),
+		Location:    time.UTC,
 	}
 
 	_, _, err = c.conn.ReadResponse(StatusReady)
@@ -290,7 +302,14 @@ func (c *ServerConn) openDataConn() (net.Conn, error) {
 		return nil, err
 	}
 
-	return net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), c.timeout)
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), c.dialTimeout)
+	if err != nil {
+		return nil, err
+	}
+	if c.ioTimeout > 0 {
+		conn.SetDeadline(time.Now().Add(c.ioTimeout))
+	}
+	return conn, nil
 }
 
 // cmd is a helper function to execute a command and check for the expected FTP
