@@ -85,6 +85,15 @@ func DialTimeouts(addr string, dialTimeout, ioTimeout time.Duration) (*ServerCon
 	if err != nil {
 		return nil, err
 	}
+	if dialTimeout > 0 {
+		tcp := tconn.(*net.TCPConn)
+		if err := tcp.SetKeepAlivePeriod(dialTimeout); err != nil {
+			return nil, err
+		}
+		if err := tcp.SetKeepAlive(true); err != nil {
+			return nil, err
+		}
+	}
 
 	// Use the resolved IP address in case addr contains a domain name
 	// If we use the domain name, we might not resolve to the same IP.
@@ -305,6 +314,15 @@ func (c *ServerConn) openDataConn() (net.Conn, error) {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), c.dialTimeout)
 	if err != nil {
 		return nil, err
+	}
+	if c.dialTimeout > 0 {
+		tcp := conn.(*net.TCPConn)
+		if err := tcp.SetKeepAlivePeriod(c.dialTimeout); err != nil {
+			return nil, err
+		}
+		if err := tcp.SetKeepAlive(true); err != nil {
+			return nil, err
+		}
 	}
 	if c.ioTimeout > 0 {
 		conn.SetDeadline(time.Now().Add(c.ioTimeout))
